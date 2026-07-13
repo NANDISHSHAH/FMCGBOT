@@ -180,6 +180,13 @@ cp .env.example .env
 streamlit run src/ui.py
 ```
 
+**Streamlit UI Demo:**
+
+<video width="100%" controls>
+  <source src="docs/Video/streamlit-ui-2026-07-13-17-52-52.webm" type="video/webm">
+  Your browser does not support the video tag.
+</video>
+
 The app opens at `http://localhost:8501`. The sidebar will show **Live (PROVIDER_NAME)** when connected.
 
 **Alternative: Use environment variables:**
@@ -194,13 +201,6 @@ streamlit run src/ui.py
 
 **UI Features:**
 
-- Automatic .env file loading (no manual export needed)
-- Session sidebar: create, switch, and reset chat sessions
-- Mock/live indicator badge showing active provider
-- Citations and source references for each answer
-- Suggested follow-up questions (clickable)
-- Trace summary: latency, token usage, estimated cost
-- Example question buttons for quick exploration
 
 #### Mode 4: Notebook
 
