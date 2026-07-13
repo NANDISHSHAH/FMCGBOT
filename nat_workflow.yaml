@@ -1,0 +1,12 @@
+# NeMo Agent Toolkit (NAT) workflow descriptor for FMCGQABOT.
+#
+# Run with:
+#   uv run nat run --config_file nat_workflow.yaml --input "How did NutriOat Gold do in North during the festive campaign?"
+#
+# The custom workflow function (fmcgqabot_qna_workflow) is registered by src/nat_plugin.py
+# via the "nat.plugins" entry point declared in pyproject.toml. It wraps the
+# existing QNAAgent, so no separate functions/llms section is required here.
+
+workflow:
+  _type: fmcgqabot_qna_workflow
+  session_id: nat_session
