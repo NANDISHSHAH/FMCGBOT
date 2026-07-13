@@ -14,7 +14,7 @@ For programmatic use (Python API, notebook, tests), see the top-level [`README.m
 All paths below assume you are in the repo root:
 
 ```bash
-cd /Users/nandishshah/Downloads/files/project-veer-qna
+cd /Users/nandishshah/Downloads/files/FMCGBOT
 ```
 
 Generate the synthetic data once (creates `data/structured/fmcg.db` and the documents under `data/unstructured/`):
@@ -42,10 +42,27 @@ export OPENAI_BASE_URL=https://api.openai.com/v1
 
 > **Mock vs live**: mock mode uses small rule-based planners for NL→SQL and synthesis. It is fast, free, and fully functional for the question patterns in [`notebooks/demo.ipynb`](../notebooks/demo.ipynb). Live mode uses the configured provider and handles open-ended phrasing better. See [`cost-latency-tradeoffs.md`](cost-latency-tradeoffs.md) for details.
 
+Optional runtime backends:
+
+```bash
+# Web search provider (optional; defaults to curated mock if not set)
+export WEBSEARCH_PROVIDER=serpapi   # or tavily
+export SERPAPI_API_KEY=...
+# export TAVILY_API_KEY=...
+
+# Unstructured retrieval mode
+export DOC_RETRIEVAL_MODE=hybrid    # hybrid | vector | tfidf
+export OPENAI_EMBED_MODEL=text-embedding-3-small
+
+# Session memory backend
+export SESSION_MEMORY_BACKEND=sqlite    # default; use inmemory to disable persistence
+export SESSION_MEMORY_DB_PATH=data/session_memory.sqlite
+```
+
 ### OpenAI setup (recommended quick path)
 
 ```bash
-cd /Users/nandishshah/Downloads/files/project-veer-qna
+cd /Users/nandishshah/Downloads/files/FMCGBOT
 
 # Install base package + UI (run once)
 uv pip install -e .
@@ -109,13 +126,15 @@ Supported `LLM_PROVIDER` values: `gemini`, `anthropic`, `openai`.
 
 ### 1.4 How the workflow is wired
 
-- [`nat_workflow.yaml`](../nat_workflow.yaml) declares `_type: fmcgqabot_qna_workflow` and a `session_id`.
-- [`src/nat_plugin.py`](../src/nat_plugin.py) defines `FMCGQABOTQNAWorkflowConfig` and the registered async function.
-- The plugin lazy-imports `QNAAgent`, runs its synchronous `chat()` method in a thread pool, and surfaces errors gracefully.
+- [`nat_workflow.yaml`](../nat_workflow.yaml) declares concrete `functions` (`current_datetime`), `llms` (`openai_primary`), and `object_stores` (`session_store`) sections, plus workflow `_type: fmcgqabot_qna_workflow` and `session_id`.
+- [`src/nat_plugin.py`](../src/nat_plugin.py) defines one registered workflow function via the `nat.plugins` entry point:
+    - `fmcgqabot_qna_workflow` — end-to-end orchestration entrypoint, wraps `QNAAgent.chat()`
+- The plugin lazy-imports `QNAAgent`, infers the active LLM provider/model from environment variables, runs the synchronous `chat()` method in a thread pool, and surfaces errors gracefully.
+- All orchestration logic (intent routing, structured/unstructured/web/coding sub-agents, synthesis, memory) lives inside `QNAAgent` — the NAT plugin is a thin async wrapper only.
 
 ### 1.5 Multi-turn sessions
 
-The default `session_id` in `nat_workflow.yaml` is `nat_session`. NAT calls the workflow function fresh each time, but `QNAAgent` keeps an in-memory session store, so consecutive calls with the same `session_id` retain context:
+The default `session_id` in `nat_workflow.yaml` is `nat_session`. NAT calls the workflow function fresh each time, and `SessionMemory` now persists by `session_id` in SQLite (default `data/session_memory.sqlite`), so consecutive calls with the same `session_id` retain context across process restarts:
 
 ```bash
 uv run nat run --config_file nat_workflow.yaml --input "How is NutriOat Gold doing in North?"
@@ -133,6 +152,19 @@ To start a fresh session, edit `session_id` in `nat_workflow.yaml` or pass a dif
 | `data/structured/fmcg.db not found` | Synthetic data not generated | `python src/data_gen/generate_data.py` |
 | Empty or generic answer | Mock mode does not recognize the phrasing | Rephrase using the patterns in `notebooks/demo.ipynb`, or set a provider API key |
 | OpenAI call fails with "model not found" | `LLM_MODEL` not set and default is a Gemini model | `export LLM_MODEL=gpt-4o` |
+
+### 1.7 Expected configuration summary
+
+With the provided workflow config, startup should show non-zero component counts similar to:
+
+- `Number of Functions: 1` — `current_datetime`
+- `Number of LLMs: 1` — `openai_primary` (gpt-4o)
+- `Number of Object Stores: 1` — `session_store` (in-memory)
+
+`Number of Retrievers` and `Number of Memory` remain `0` because no external retriever (Milvus/Nemo) or dedicated NAT memory provider is configured. Document retrieval and session continuity are handled internally by `UnstructuredDataAgent` and `SessionMemory` inside the workflow function.
+
+**Why built-in component types?**
+NAT validates the YAML config against a discriminated union of registered types *before* the workflow executes. Custom `@register_function` types (registered by the plugin at runtime) are not visible at config-parse time, so only built-in types shipped with the `nat` package can be declared in YAML. The custom workflow function `fmcgqabot_qna_workflow` is an exception because it is registered via the `nat.plugins` entry point, which NAT loads during startup *before* schema validation.
 
 ---
 
@@ -178,7 +210,23 @@ streamlit run src/ui.py
 
 The sidebar will show the active provider (e.g. "Live (OPENAI)").
 
-### 2.4 UI features
+### 2.4 Streamlit UI Demo
+
+Watch the interactive UI in action with OpenAI (gpt-4o-mini) answering FMCG business questions:
+
+<video width="100%" controls>
+  <source src="Video/streamlit-ui-2026-07-13-17-52-52.webm" type="video/webm">
+  Your browser does not support the video tag.
+</video>
+
+The demo shows:
+- **Live mode activation** (provider badge shows 🟢 Live (OPENAI))
+- **Multi-turn conversation** with session persistence
+- **Source citations** from structured (SQL) and unstructured (documents) data
+- **Follow-up suggestions** auto-generated by the orchestrator
+- **Trace visibility** (latency, token count, cost estimates)
+
+### 2.5 UI features
 
 - **Session sidebar**: create, switch, or reset chat sessions. Each session keeps its own memory and follow-up context.
 - **Mock/live indicator**: a badge in the sidebar shows whether the agent is running in mock or live mode and which provider is active.
@@ -187,7 +235,7 @@ The sidebar will show the active provider (e.g. "Live (OPENAI)").
 - **Trace summary**: expand the "Trace" section to see latency, token usage, and estimated cost for the last turn.
 - **Example questions**: buttons to populate the input with representative queries from the demo notebook.
 
-### 2.5 UI architecture
+### 2.6 UI architecture
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -204,7 +252,7 @@ The sidebar will show the active provider (e.g. "Live (OPENAI)").
 └─────────────────────────────────────────────┘
 ```
 
-The UI is stateless across restarts — sessions live in Streamlit's `st.session_state`. For a production deployment you would persist `SessionMemory` to Redis or a database.
+UI chat transcripts in `st.session_state` reset on browser/app restart, but backend session memory (entities, rolling summary, turns) is persisted by `SessionMemory` in SQLite unless `SESSION_MEMORY_BACKEND=inmemory`.
 
 ---
 
@@ -213,7 +261,7 @@ The UI is stateless across restarts — sessions live in Streamlit's `st.session
 The notebook uses `QNAAgent()` and therefore picks up `LLM_PROVIDER` / `LLM_MODEL` from your shell environment.
 
 ```bash
-cd /Users/nandishshah/Downloads/files/project-veer-qna
+cd /Users/nandishshah/Downloads/files/FMCGBOT
 export LLM_PROVIDER=openai
 export LLM_MODEL=gpt-4o
 export OPENAI_API_KEY=sk-...

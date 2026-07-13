@@ -11,8 +11,8 @@ the notebook cell that demonstrates it.
 | 4 | Clarification for ambiguous/incomplete requests | `IntentResult(turn_type="ambiguous", clarification_question=...)` in `intent.py` | Cell 4 |
 | 5 | Contextual follow-up via conversation history | `SessionMemory.last_resolved_entities` merged into each turn's entity resolution | Cell 6 |
 | 6 | Semantic understanding: aliases, abbreviations, typos | `BRAND_ALIASES`/`REGION_ALIASES`/`KPI_ALIASES` + `difflib`-based fuzzy correction | Cell 7 |
-| 7 | Multilingual / mixed-language queries | `NON_ENGLISH_HINTS` detection + alias matching works language-agnostically on entity tokens; full fluency requires live mode (Gemini is natively multilingual) | Cell 8 |
-| 8 | Conversation context preservation across interactions | `SessionMemory.turns` + `.last_resolved_entities`, persisted per `session_id` in `QNAAgent._sessions` | Cells 5–6, 17 |
+| 7 | Multilingual / mixed-language queries | `intent.normalize_multilingual_query()` maps common Hindi/Hinglish terms to canonical English query intent before routing + entity resolution (`NON_ENGLISH_HINTS` retained for detection) | Cell 8 |
+| 8 | Conversation context preservation across interactions | `SessionMemory` persists turns/summary/entities to SQLite (`data/session_memory.sqlite`) by `session_id`, with in-memory fallback | Cells 5–6, 17 |
 | 9 | Secure access with SQL safety controls | `src/tools/sql_tool.py`: SELECT-only, table allow-list, forbidden-keyword blocklist, row cap | `tests/test_sql_guard.py` (6 tests) |
 | 10 | Structured + unstructured retrieval from multiple sources | `StructuredDataAgent` (SQLite) + `UnstructuredDataAgent` (markdown corpus) | Cell 5 (structured), Cell 10 (unstructured) |
 | 11 | Document retrieval with source citations | `doc_retrieval_tool.retrieve()` returns `source`/`published`/`doc_type` per hit; surfaced in every answer that cites documents | Cells 9–10 |

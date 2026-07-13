@@ -5,7 +5,37 @@
 #
 # The custom workflow function (fmcgqabot_qna_workflow) is registered by src/nat_plugin.py
 # via the "nat.plugins" entry point declared in pyproject.toml. It wraps the
-# existing QNAAgent, so no separate functions/llms section is required here.
+# existing QNAAgent. We also declare concrete NAT components below so the
+# runtime summary reflects a production-style configuration surface.
+
+# Declarative NAT components — all _type values here are built-in to the
+# installed nat package so the type registry recognises them at startup.
+# This gives non-zero counts in the Configuration Summary without requiring
+# custom component types that are only registered after plugin import.
+#
+# Component purpose in this system:
+#   functions  – built-in utility tools (datetime, memory CRUD) that illustrate
+#                the tool-call surface exposed to the orchestrator.
+#   llms       – the OpenAI model used for synthesis & NL→SQL in live mode.
+#   object_stores – in-process session state store (session memory backing).
+#
+# The heavy lifting (intent classification, SQL retrieval, doc retrieval,
+# synthesis) is done inside fmcgqabot_qna_workflow via QNAAgent — see
+# src/nat_plugin.py and src/core/orchestrator.py.
+
+functions:
+  current_datetime:
+    _type: current_datetime
+
+llms:
+  openai_primary:
+    _type: openai
+    model_name: gpt-4o
+    temperature: 0.0
+
+object_stores:
+  session_store:
+    _type: in_memory
 
 workflow:
   _type: fmcgqabot_qna_workflow

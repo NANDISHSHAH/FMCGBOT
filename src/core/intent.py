@@ -55,6 +55,30 @@ NON_ENGLISH_HINTS = re.compile(
     r"|\b(kitna|kitne|batao|kya|bikri|kripya|dikhao)\b", re.I
 )
 
+HINDI_EN_NORMALIZATION = {
+    "kitna": "how much",
+    "kitne": "how many",
+    "kya": "what",
+    "batao": "tell",
+    "dikhao": "show",
+    "bikri": "sales",
+    "becha": "sold",
+    "hua": "happened",
+    "kitni": "how much",
+    "rajasv": "revenue",
+    "uttar": "north",
+    "dakshin": "south",
+    "purab": "east",
+    "paschim": "west",
+    "mahina": "month",
+    "saal": "year",
+    "ka": "of",
+    "ki": "of",
+    "ke": "of",
+    "me": "in",
+    "mein": "in",
+}
+
 
 @dataclass
 class IntentResult:
@@ -129,22 +153,31 @@ def normalize_entities(text: str) -> Dict[str, Any]:
     return resolved
 
 
+def normalize_multilingual_query(text: str) -> str:
+    """Map common Hindi/Hinglish business terms to canonical English hints."""
+    normalized = text
+    for src, tgt in HINDI_EN_NORMALIZATION.items():
+        normalized = re.sub(rf"\b{re.escape(src)}\b", tgt, normalized, flags=re.I)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
 class IntentRouter:
     def __init__(self, llm: Optional[LLMClient] = None):
         self.llm = llm or LLMClient()
 
     def classify(self, text: str, memory) -> IntentResult:
         stripped = text.strip()
+        canonical = normalize_multilingual_query(stripped)
 
-        if GREETING_RE.match(stripped) and len(stripped.split()) <= 5:
+        if GREETING_RE.match(canonical) and len(canonical.split()) <= 5:
             return IntentResult(turn_type="greeting")
-        if THANKS_BYE_RE.match(stripped):
+        if THANKS_BYE_RE.match(canonical):
             return IntentResult(turn_type="chitchat_close")
-        if CAPABILITY_RE.search(stripped):
+        if CAPABILITY_RE.search(canonical):
             return IntentResult(turn_type="capability")
 
         non_english = bool(NON_ENGLISH_HINTS.search(stripped))
-        entities = normalize_entities(stripped)
+        entities = normalize_entities(canonical)
 
         # merge with last-resolved entities from memory for follow-up resolution
         merged = dict(memory.last_resolved_entities)
@@ -153,7 +186,7 @@ class IntentRouter:
         # cheap ambiguity heuristic: very short, vague follow-ups with no
         # resolvable entity at all and no prior context to fall back on
         vague_followup = bool(re.match(r"^\s*(and (last|this) (month|year)|what about (it|that)|more)\W*$",
-                                        stripped, re.I))
+                                        canonical, re.I))
         if vague_followup and not merged:
             return IntentResult(
                 turn_type="ambiguous",
@@ -173,20 +206,20 @@ class IntentRouter:
         # inherit scope from memory. Longer messages must stand on their own
         # keywords/entities regardless of prior context. This is a precision/
         # recall trade-off documented in docs/design-decisions.md.
-        in_domain_hint = any(k in stripped.lower() for k in (
+        in_domain_hint = any(k in canonical.lower() for k in (
             "sale", "sku", "brand", "region", "revenue", "unit", "stock", "inventory",
             "campaign", "discount", "promo", "kpi", "quarter", "month", "growth", "market",
             "fmcg", "industry", "benchmark", "penetration", "competitor", "category"
-        )) or bool(entities) or (bool(merged) and len(stripped.split()) <= 8)
+        )) or bool(entities) or (bool(merged) and len(canonical.split()) <= 8)
 
         if not in_domain_hint:
-            verdict = self._llm_scope_check(stripped)
+            verdict = self._llm_scope_check(canonical)
             if verdict == "out_of_scope":
                 return IntentResult(turn_type="out_of_scope")
 
         result = IntentResult(
             turn_type="question",
-            canonical_query=stripped,
+            canonical_query=canonical,
             resolved_entities=merged,
             detected_non_english=non_english,
         )

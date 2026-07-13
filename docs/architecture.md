@@ -1,6 +1,106 @@
 # Architecture
 
-## Overview diagram
+## System overview
+
+FMCGQABOT is a multi-agent Q&A system built on a hand-rolled orchestration layer
+over four specialised sub-agents, with NAT (NeMo Agent Toolkit) providing the
+runtime, tracing, and component-declaration surface.
+
+---
+
+## High-level component diagram
+
+```mermaid
+flowchart TD
+    U[User / CLI / UI / NAT run] -->|question + session_id| Q[QNAAgent]
+    Q --> O[OrchestratorAgent]
+
+    subgraph Core
+        O --> I[IntentRouter]
+        I -->|greeting| R1[Greeting Response]
+        I -->|capability| R2[Capability Response]
+        I -->|out_of_scope| R3[Out of Scope Response]
+        I -->|ambiguous| R4[Clarification Question]
+        I -->|question| ROUTE[Routing Logic]
+        ROUTE --> SA[StructuredDataAgent]
+        ROUTE --> UA[UnstructuredDataAgent]
+        ROUTE --> WA[WebSearchAgent]
+        ROUTE --> CA[CodingAgent]
+        SA --> V[Validation]
+        UA --> V
+        WA --> V
+        CA --> V
+        V --> SYN[Synthesis]
+        SYN --> MEM[SessionMemory Update]
+        MEM --> OUT[Final Answer + Sources + Suggestions]
+    end
+
+    subgraph ToolLayer
+        SA --> SQL[sql_tool.py]
+        UA --> DR[doc_retrieval_tool.py]
+        WA --> WS[websearch_tool.py]
+        CA --> CT[code_tool.py]
+    end
+
+    subgraph DataLayer
+        SQL --> DB[(data/structured/fmcg.db)]
+        DR --> DOC[(data/unstructured/*.md)]
+        WS --> EXT[External search corpus or API]
+    end
+
+    subgraph NAT
+        YAML[nat_workflow.yaml] --> PLUGIN[src/nat_plugin.py]
+        PLUGIN --> Q
+    end
+
+    O --> T[Trace spans in src/core/tracing.py]
+    T --> M[Latency + Tokens + Cost metrics]
+```
+
+---
+
+## Request / response data flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant Q as QNAAgent
+    participant O as Orchestrator
+    participant I as IntentRouter
+    participant SA as StructuredAgent
+    participant UA as UnstructuredAgent
+    participant V as Validator
+    participant S as Synthesizer
+    participant M as SessionMemory
+
+    U->>Q: chat(question, session_id)
+    Q->>M: add_user_turn(question)
+    Q->>O: handle_turn(question, memory)
+    O->>I: classify(question, memory)
+    I-->>O: IntentResult (turn_type, entities, canonical_query)
+    alt not a business question
+        O-->>U: greeting / capability / out_of_scope / clarification
+    end
+    O->>O: _route(intent) → plan
+    par parallel-ready (currently sequential)
+        O->>SA: run(query, entities, trace)
+        SA-->>O: {ok, rows, row_count, sql}
+    and
+        O->>UA: run(query, entities, trace)
+        UA-->>O: {sources, summary, filters_widened}
+    end
+    O->>V: _validate(sub_results)
+    V-->>O: validation_notes
+    O->>S: _synthesize(intent, sub_results, notes)
+    S-->>O: answer_text
+    O->>M: update_entities + maybe_compress
+    O-->>Q: {answer, sources, suggestions, trace, validation_notes}
+    Q-->>U: result dict
+```
+
+---
+
+## ASCII overview diagram
 
 ```
                               ┌─────────────────────────┐

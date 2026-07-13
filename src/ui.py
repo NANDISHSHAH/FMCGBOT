@@ -6,11 +6,17 @@ Run with:
 Requires the optional UI dependencies (streamlit). Install with:
     uv pip install -e ".[ui]"
 
-To use a non-default LLM provider (e.g. OpenAI), set environment variables
-before launching the UI:
+Environment Variables:
+  .env file is automatically loaded on startup. Copy .env.example to .env and fill in:
+    - LLM_PROVIDER: openai, anthropic, or gemini (default: gemini)
+    - LLM_MODEL: model name (e.g., gpt-4o-mini, claude-3-5-haiku-latest)
+    - OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY: as needed
+    - WEBSEARCH_PROVIDER: serpapi or tavily (optional, for web search)
+    - DOC_RETRIEVAL_MODE: tfidf, vector, or hybrid (default: hybrid)
 
+Alternatively, set environment variables before launching:
     export LLM_PROVIDER=openai
-    export LLM_MODEL=gpt-4o
+    export LLM_MODEL=gpt-4o-mini
     export OPENAI_API_KEY=sk-...
     streamlit run src/ui.py
 """
@@ -18,9 +24,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
 import streamlit as st
+
+# Add project root to Python path (needed for streamlit run)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Load environment variables from .env file (if it exists)
+load_dotenv()
 
 from src.qna_agent import QNAAgent
 

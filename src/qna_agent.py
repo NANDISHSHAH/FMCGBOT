@@ -35,4 +35,7 @@ class QNAAgent:
         return self.orchestrator.handle_turn(text, memory)
 
     def reset_session(self, session_id: str = "default"):
-        self._sessions.pop(session_id, None)
+        memory = self._sessions.pop(session_id, None)
+        if memory is None:
+            memory = SessionMemory(session_id)
+        memory.clear()

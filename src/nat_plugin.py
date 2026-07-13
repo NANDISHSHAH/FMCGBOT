@@ -1,19 +1,5 @@
-"""
-NeMo Agent Toolkit (NAT) plugin for FMCGQABOT.
+"""NAT plugin registrations for FMCGQABOT."""
 
-Registers the QNAAgent as a NAT workflow function so the project can be run
-with:
-
-    uv run nat run --config_file nat_workflow.yaml --input "How did NutriOat Gold do in North?"
-
-To use a non-default provider (e.g. OpenAI), set environment variables before
-running NAT:
-
-    export LLM_PROVIDER=openai
-    export LLM_MODEL=gpt-4o
-    export OPENAI_API_KEY=sk-...
-    uv run nat run --config_file nat_workflow.yaml --input "How did NutriOat Gold do in North?"
-"""
 from __future__ import annotations
 
 import asyncio

@@ -14,6 +14,10 @@ implement `search(query, num_results)` returning the same shape and pass it
 into WebSearchTool(provider=...). No calling code changes.
 """
 from __future__ import annotations
+import json
+import os
+import urllib.parse
+import urllib.request
 from typing import Any, Dict, List, Protocol
 
 
@@ -66,17 +70,125 @@ class MockSearchProvider:
         return [item for _, item in scored[:num_results]]
 
 
+class LiveSearchProvider:
+    """Live web search via external providers selected by environment variables.
+
+    Supported providers:
+      - serpapi  (requires SERPAPI_API_KEY)
+      - tavily   (requires TAVILY_API_KEY)
+
+    Configuration:
+      WEBSEARCH_PROVIDER=serpapi|tavily   (default: serpapi)
+      WEBSEARCH_TIMEOUT_SECONDS=10         (default: 10)
+    """
+
+    def __init__(self):
+        self.provider = (os.environ.get("WEBSEARCH_PROVIDER") or "serpapi").strip().lower()
+        self.timeout = float(os.environ.get("WEBSEARCH_TIMEOUT_SECONDS", "10"))
+
+    def search(self, query: str, num_results: int = 3) -> List[Dict[str, str]]:
+        if self.provider == "tavily":
+            return self._tavily_search(query, num_results)
+        return self._serpapi_search(query, num_results)
+
+    def _serpapi_search(self, query: str, num_results: int) -> List[Dict[str, str]]:
+        api_key = os.environ.get("SERPAPI_API_KEY")
+        if not api_key:
+            raise RuntimeError("SERPAPI_API_KEY is not set")
+
+        params = urllib.parse.urlencode(
+            {
+                "q": query,
+                "engine": "google",
+                "api_key": api_key,
+                "num": max(1, min(num_results, 10)),
+            }
+        )
+        url = f"https://serpapi.com/search.json?{params}"
+        req = urllib.request.Request(url=url, method="GET")
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        results = []
+        for item in payload.get("organic_results", [])[:num_results]:
+            results.append(
+                {
+                    "title": item.get("title", "Untitled"),
+                    "url": item.get("link", ""),
+                    "snippet": item.get("snippet", ""),
+                }
+            )
+        return results
+
+    def _tavily_search(self, query: str, num_results: int) -> List[Dict[str, str]]:
+        api_key = os.environ.get("TAVILY_API_KEY")
+        if not api_key:
+            raise RuntimeError("TAVILY_API_KEY is not set")
+
+        body = json.dumps(
+            {
+                "query": query,
+                "search_depth": "basic",
+                "max_results": max(1, min(num_results, 10)),
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            url="https://api.tavily.com/search",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        results = []
+        for item in payload.get("results", [])[:num_results]:
+            results.append(
+                {
+                    "title": item.get("title", "Untitled"),
+                    "url": item.get("url", ""),
+                    "snippet": item.get("content", ""),
+                }
+            )
+        return results
+
+
 class WebSearchTool:
     def __init__(self, provider: SearchProvider = None):
-        self.provider = provider or MockSearchProvider()
+        self.provider = provider or self._auto_provider()
         self.is_mock = isinstance(self.provider, MockSearchProvider)
 
+    @staticmethod
+    def _auto_provider() -> SearchProvider:
+        provider = (os.environ.get("WEBSEARCH_PROVIDER") or "").strip().lower()
+        if provider in {"serpapi", "tavily"}:
+            try:
+                return LiveSearchProvider()
+            except Exception:
+                return MockSearchProvider()
+        if os.environ.get("SERPAPI_API_KEY") or os.environ.get("TAVILY_API_KEY"):
+            try:
+                return LiveSearchProvider()
+            except Exception:
+                return MockSearchProvider()
+        return MockSearchProvider()
+
     def search(self, query: str, num_results: int = 3) -> Dict[str, Any]:
-        results = self.provider.search(query, num_results)
+        note = None
+        try:
+            results = self.provider.search(query, num_results)
+        except Exception as e:
+            # Graceful fallback to curated corpus when live providers fail.
+            fallback = MockSearchProvider()
+            results = fallback.search(query, num_results)
+            self.provider = fallback
+            self.is_mock = True
+            note = f"LIVE provider unavailable ({e}); served from curated mock corpus."
+
         return {
             "query": query,
             "provider": "mock_curated_corpus" if self.is_mock else "live",
-            "note": (
+            "note": note or (
                 "MOCK: no live internet search configured in this environment; "
                 "results are drawn from a small curated corpus for demo purposes."
                 if self.is_mock else None

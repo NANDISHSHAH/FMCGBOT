@@ -1,9 +1,8 @@
 # Cost, Latency & Model Usage — Point of View
 
 This is written from actual measured numbers in mock mode (this repo's committed
-state, no API key) plus explicit, labeled *estimates* for live mode (no key was
-available to measure against — see README). The methodology is the same either
-way: every LLM/tool call is wrapped in a `Trace` span (`src/core/tracing.py`)
+state) plus explicit, labeled *estimates* for live mode. The methodology is the
+same either way: every LLM/tool call is wrapped in a `Trace` span (`src/core/tracing.py`)
 that records duration and, for LLM calls, tokens + estimated USD cost using the
 rates in `src/core/llm_client.py::PRICE_PER_MTOK`.
 
@@ -86,9 +85,11 @@ list.
    — many queries (single entity + KPI, unambiguous) don't need a full NL→SQL
    generation; a template match could shortcut straight to guarded execution,
    saving a full LLM round trip on the most common query shape.
-3. **Cache document retrieval** — the TF-IDF index is already in-process and
-   fast, but for a real vector DB, caching embeddings for repeated/similar
-   queries would matter more than for this corpus size.
+3. **Tune hybrid retrieval weights and cache policy** — unstructured retrieval
+   now supports `tfidf`, `vector`, and `hybrid` modes (`DOC_RETRIEVAL_MODE`).
+   The current hybrid blend favors vector similarity with TF-IDF as lexical
+   grounding; production tuning should calibrate this by query type and monitor
+   precision/recall drift.
 4. **Batch/stream synthesis** — for long answers, streaming the final synthesis
    call improves *perceived* latency even though total cost/wall-time is
    unchanged.
@@ -100,3 +101,15 @@ correctness and testability** (guardrails, validation/retry, cited hybrid
 retrieval) over runtime performance. The two items above (parallel sub-agent
 calls, template-shortcut for common SQL shapes) are the concrete next steps if
 this moved toward a production latency budget.
+
+## 6. Mock vs live multilingual behavior (updated)
+
+Mock mode now performs deterministic query normalization for common Hindi/
+Hinglish FMCG phrasing before intent routing (`src/core/intent.py`), e.g.
+`kitna revenue hua SunFresh ka South me?` is normalized into an English
+canonical query used by downstream planners. This closes the biggest parity gap
+for intent/routing and structured retrieval in mixed-language turns.
+
+Remaining gap: live models still outperform mock mode on open-ended multilingual
+explanations and nuanced paraphrases because mock mode intentionally avoids full
+translation/generation calls.

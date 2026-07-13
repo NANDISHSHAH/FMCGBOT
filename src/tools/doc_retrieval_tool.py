@@ -18,13 +18,18 @@ Supports:
     exercise in the eval notebook (see the discount-policy question).
 """
 from __future__ import annotations
+import hashlib
+import json
 import math
+import os
 import re
+import urllib.request
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 DOCS_DIR = Path(__file__).resolve().parents[2] / "data" / "unstructured"
+CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / ".cache"
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9]+")
 
@@ -37,6 +42,8 @@ class _DocIndex:
     def __init__(self):
         self.docs: List[Dict[str, Any]] = []
         self._df: Counter = Counter()
+        self._embeddings_by_fingerprint: Dict[str, List[float]] = {}
+        self._embeddings_loaded = False
         self._loaded = False
 
     def load(self):
@@ -57,6 +64,34 @@ class _DocIndex:
             for term in set(tokens):
                 self._df[term] += 1
         self._loaded = True
+
+    @staticmethod
+    def _fingerprint(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _cache_file(self, model: str) -> Path:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        safe_model = re.sub(r"[^a-zA-Z0-9_.-]", "_", model)
+        return CACHE_DIR / f"doc_embeddings_{safe_model}.json"
+
+    def load_embeddings_cache(self, model: str):
+        if self._embeddings_loaded:
+            return
+        path = self._cache_file(model)
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    self._embeddings_by_fingerprint = {
+                        k: v for k, v in payload.items() if isinstance(k, str) and isinstance(v, list)
+                    }
+            except Exception:
+                self._embeddings_by_fingerprint = {}
+        self._embeddings_loaded = True
+
+    def save_embeddings_cache(self, model: str):
+        path = self._cache_file(model)
+        path.write_text(json.dumps(self._embeddings_by_fingerprint), encoding="utf-8")
 
     @staticmethod
     def _parse_front_matter(raw: str):
@@ -112,7 +147,23 @@ def retrieve(
     prefer_recent: bool = True,
 ) -> Dict[str, Any]:
     """Retrieve top_k relevant documents with metadata filters + citations."""
-    scored = _INDEX.score(query)
+    mode = (os.environ.get("DOC_RETRIEVAL_MODE") or "hybrid").strip().lower()
+    provider = (os.environ.get("DOC_VECTOR_PROVIDER") or "openai").strip().lower()
+
+    retrieval_mode = "tfidf"
+    vector_error = None
+    scored: List[Dict[str, Any]] = []
+
+    if mode in {"vector", "hybrid"} and provider == "openai":
+        scored, vector_error = _vector_score_openai(query)
+        if scored and mode == "vector":
+            retrieval_mode = "vector"
+        elif scored and mode == "hybrid":
+            retrieval_mode = "hybrid"
+
+    if not scored:
+        scored = _INDEX.score(query)
+        retrieval_mode = "tfidf"
 
     def matches_filters(doc):
         m = doc["meta"]
@@ -136,6 +187,8 @@ def retrieve(
     hits = filtered[:top_k]
     return {
         "query": query,
+        "retrieval_mode": retrieval_mode,
+        "vector_fallback_reason": vector_error,
         "filters_applied": {"category": category, "doc_type": doc_type},
         "filters_widened_due_to_no_match": widened,
         "results": [
@@ -162,6 +215,95 @@ def _excerpt(body: str, query: str, window: int = 280) -> str:
         if hits > best_hits:
             best_hits, best_p = hits, p
     return best_p[:window].strip()
+
+
+def _vector_score_openai(query: str) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return [], "OPENAI_API_KEY not set for vector retrieval"
+
+    _INDEX.load()
+    model = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+    timeout = float(os.environ.get("DOC_VECTOR_TIMEOUT_SECONDS", "20"))
+
+    try:
+        _INDEX.load_embeddings_cache(model)
+
+        doc_vectors: Dict[str, List[float]] = {}
+        missing: List[tuple[str, str]] = []
+        for d in _INDEX.docs:
+            fp = _INDEX._fingerprint(d["body"])
+            vec = _INDEX._embeddings_by_fingerprint.get(fp)
+            if vec:
+                doc_vectors[d["filename"]] = vec
+            else:
+                missing.append((d["filename"], d["body"]))
+
+        if missing:
+            texts = [b for _, b in missing]
+            batch = _openai_embed(texts, model=model, api_key=api_key, timeout=timeout)
+            for (filename, body), vec in zip(missing, batch):
+                fp = _INDEX._fingerprint(body)
+                _INDEX._embeddings_by_fingerprint[fp] = vec
+                doc_vectors[filename] = vec
+            _INDEX.save_embeddings_cache(model)
+
+        q_vec = _openai_embed([query], model=model, api_key=api_key, timeout=timeout)[0]
+        q_norm = _l2_norm(q_vec)
+
+        rows = []
+        for d in _INDEX.docs:
+            d_vec = doc_vectors.get(d["filename"])
+            if not d_vec:
+                continue
+            score = _cosine_from_normed(q_vec, q_norm, d_vec)
+            rows.append({"doc": d, "score": score})
+
+        rows.sort(key=lambda r: r["score"], reverse=True)
+
+        if (os.environ.get("DOC_RETRIEVAL_MODE") or "hybrid").strip().lower() != "vector":
+            tfidf_rows = _INDEX.score(query)
+            tfidf_map = {r["doc"]["filename"]: r["score"] for r in tfidf_rows}
+            if tfidf_map:
+                max_tfidf = max(tfidf_map.values())
+                if max_tfidf > 0:
+                    for r in rows:
+                        tfidf_norm = tfidf_map.get(r["doc"]["filename"], 0.0) / max_tfidf
+                        r["score"] = 0.65 * r["score"] + 0.35 * tfidf_norm
+                rows.sort(key=lambda r: r["score"], reverse=True)
+
+        return rows, None
+    except Exception as e:
+        return [], f"vector retrieval unavailable: {e}"
+
+
+def _openai_embed(texts: List[str], model: str, api_key: str, timeout: float) -> List[List[float]]:
+    base_url = (os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    payload = json.dumps({"model": model, "input": texts}).encode("utf-8")
+    req = urllib.request.Request(
+        url=f"{base_url}/embeddings",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    data = body.get("data", [])
+    if len(data) != len(texts):
+        raise RuntimeError("Unexpected embeddings response size")
+    return [item["embedding"] for item in data]
+
+
+def _l2_norm(vec: List[float]) -> float:
+    return math.sqrt(sum(x * x for x in vec)) or 1.0
+
+
+def _cosine_from_normed(a: List[float], a_norm: float, b: List[float]) -> float:
+    b_norm = _l2_norm(b)
+    return sum(x * y for x, y in zip(a, b)) / (a_norm * b_norm)
 
 
 def list_metadata() -> Dict[str, Any]:
