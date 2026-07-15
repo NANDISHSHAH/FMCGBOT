@@ -182,10 +182,11 @@ streamlit run src/ui.py
 
 **Streamlit UI Demo:**
 
-<video width="100%" controls>
-  <source src="docs/Video/streamlit-ui-2026-07-13-17-52-52.webm" type="video/webm">
+<video src="./docs/Video/streamlit-ui-2026-07-13-17-52-52.webm" width="100%" controls muted playsinline>
   Your browser does not support the video tag.
 </video>
+
+If your Markdown viewer does not render inline video, open [the demo video](docs/Video/streamlit-ui-2026-07-13-17-52-52.webm) directly.
 
 The app opens at `http://localhost:8501`. The sidebar will show **Live (PROVIDER_NAME)** when connected.
 

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "context-harness": {
+      "command": "/Users/nandishshah/.local/bin/uv",
+      "args": [
+        "run",
+        "--extra",
+        "harness",
+        "context-harness-mcp"
+      ],
+      "env": {
+        "CONTEXTPACK_ROOT": "/Users/nandishshah/Downloads/files/FMCGBOT"
+      }
+    }
+  }
+}

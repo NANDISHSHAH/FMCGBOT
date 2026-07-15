@@ -214,10 +214,11 @@ The sidebar will show the active provider (e.g. "Live (OPENAI)").
 
 Watch the interactive UI in action with OpenAI (gpt-4o-mini) answering FMCG business questions:
 
-<video width="100%" controls>
-  <source src="Video/streamlit-ui-2026-07-13-17-52-52.webm" type="video/webm">
+<video src="./Video/streamlit-ui-2026-07-13-17-52-52.webm" width="100%" controls muted playsinline>
   Your browser does not support the video tag.
 </video>
+
+If your Markdown viewer does not render inline video, open [the demo video](Video/streamlit-ui-2026-07-13-17-52-52.webm) directly.
 
 The demo shows:
 - **Live mode activation** (provider badge shows 🟢 Live (OPENAI))
